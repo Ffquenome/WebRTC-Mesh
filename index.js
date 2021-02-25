@@ -11,8 +11,8 @@ server.use(express.static('public'));
 
 
 //Porta onde esta sendo executado
-http.listen(3000, () => {
-    console.log('Server está la na porta 3000');
+http.listen(8080, () => {
+    console.log('Server está la na porta 8080');
 });
 
 

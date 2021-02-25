@@ -1,128 +1,67 @@
-//Variables and configuration -----------------------------------------------------------------
+/*
+
+    +++Cliente to WebRTC_Mesh room+++
+    To undrestand about how this code works, please take a look at the README in the project.
+
     
-    //Media configuration:
-    const mediaStreamConstraints = {
-        video: true,
-        audio: true
-    };
+*/
 
 
-    //Some variables that i will need to use:
-    const localVideo = document.getElementById('localVideo');
-    let localStream;
-    let localUserId;
-    let connections = [];
-    //const socket = io.connect('http://localhost:3000', { secure: true });
-    
+class ClientMesh {
 
-//Functions that we will call: ----------------------------------------------------------------
-
-    //Function to get the joiners stream:
-    function gotRemoteStream(event, userId) {
-
-        //Criating and configurating the new video.
-        let remoteVideo  = document.createElement('video');
-        remoteVideo.setAttribute('data-socket', userId);
-        remoteVideo.srcObject   = event.stream;
-        remoteVideo.autoplay    = true;
-        remoteVideo.muted       = true; // to dismute //Leo
-        remoteVideo.playsinline = true;
-
-        //Puting it on the html page:
-        document.querySelector('.videos').appendChild(remoteVideo);
+    //Variables that we will use in the code:
+    constructor(){
+        this.localStream;
+        this.localUserId;
+        this.connections = [];
+        this.events = {};
     }
+    
 
+
+    //Internal Functions that we will call: 
 
     //Function to work with the the ice candidate:
-    function gotIceCandidate(fromId, candidate) {
-        connections[fromId]
+    gotIceCandidate (fromId, candidate) {
+        this.connections[fromId]
         .addIceCandidate(new RTCIceCandidate(candidate))
-        .catch(handleError);
+        .catch(e => console.log('Error: ',e));
     }
 
 
-    //Function to start the local stream:
-    function startLocalStream() {
-        navigator.mediaDevices.getUserMedia(mediaStreamConstraints)
-        .then(getUserMediaSuccess)
-        .then(connectSocketToSignaling)
-        .catch(handleError);
-    }
-
-
-    
-    //Called when we have a new candidate.
-    function gotMessageFromSignalingAndItIsCandidate(socket, data) {
-        const fromId = data.fromId;
-        if (fromId !== localUserId) {
-            console.log(socket.id, ' Receive Candidate from ', fromId);
-            if (data.candidate) {
-                gotIceCandidate(fromId, data.candidate);
-            }
-                
-        };
-    };
-   
-
-    //Called when we have an offer -> do an answer
-    function gotMessageFromSignalingAndItIsSdp(socket, data) {
-        const fromId = data.fromId;
-        if (fromId !== localUserId) {
-            if (data.description) {
-                console.log(socket.id, ' Receive sdp from ', fromId);
-                connections[fromId].setRemoteDescription(new RTCSessionDescription(data.description))
-                .then(() => {
-                    if (data.description.type === 'offer') {
-                        connections[fromId].createAnswer()
-                        .then((description) => {
-                            connections[fromId].setLocalDescription(description).then(() => {
-                                console.log(socket.id, ' Send answer to ', fromId);
-                                socket.emit('signaling', {
-                                    type: 'sdp',
-                                    toId: fromId,
-                                    description: connections[fromId].localDescription
-                                });
-                            });
-                        }).catch(handleError);
-                    }
-                })
-                .catch(handleError);
-            }
+    //Function to handle with the events:
+    on(eventName, callback){
+        if (!this.events[eventName]) {
+          this.events[eventName] = [];
         }
+    
+        this.events[eventName].push(callback);
     }
+    
 
-
-     
-    //Função para pegar o local video/audio
-    function getUserMediaSuccess(mediaStream) {
-        localStream = mediaStream;
-        localVideo.srcObject = mediaStream;
+    //Function to handle with the messages:
+    emit(eventName, args){
+        this.events[eventName].forEach((callback)=>{
+            callback(args);
+        });
     }
+ 
 
 
+    //Main Functions: 
 
-    //Handler de erro
-    function handleError(e) {
-        console.log(e);
-        alert('Something went wrong.');
-    }
-
-
-
-//Main maneger of functions: ----------------------------------------------------------------
-
-
-    function connectSocketToSignaling() {
-        const socket = io.connect();
+    //It will controll the main part of the client (Signaling parts && Offer/ Answer && Connections).
+    connectSocketToSignaling(mediaStream) {
+        this.socket = io.connect();
 
         //When someone connect:
-        socket.on('connect', () => {
-            localUserId = socket.id;
+        this.socket.on('connect', () => {
+            this.localUserId = this.socket.id;
             //logando o id do user que entrou.
-            console.log('localUser', localUserId);
+            console.log('localUser', this.localUserId);
 
 
-            socket.on('user-joined', (room) => { //room=data
+            this.socket.on('user-joined', (room) => { //room=data
                 const clients = room.clients;
                 const joinedUserId = room.joinedUserId;
                 console.log(joinedUserId, ' joined');
@@ -131,28 +70,28 @@
                 clients.forEach((userId) => {
                     //Who is entering now, goes inside the if.
                     //The others (that are aredy in the room) dont go inside.
-                    if (!connections[userId]) {
-                        connections[userId] = new RTCPeerConnection(mediaStreamConstraints);
-                        connections[userId].onicecandidate = () => {
+                    if (!this.connections[userId]) {
+                        this.connections[userId] = new RTCPeerConnection(mediaStream);
+                        //Melhorar:
+                        this.connections[userId].onicecandidate = evt => {
 
-                            //This part need to be fixed //Leo
-                            if (event.candidate) {
-                                console.log(socket.id, ' Send candidate to ', userId);
-                                socket.emit('signaling', 
-                                {type: 'candidate', candidate: event.candidate, toId: userId}); 
+                            if (evt.candidate) {
+                                console.log(this.socket.id, ' Send candidate to ', userId);
+                                this.socket.emit('signaling', 
+                               {type: 'candidate', candidate: evt.candidate, toId: userId}); 
                             };
-                            
-                            
+                           
                         };
 
                         //New video to the new guy.
-                        connections[userId].onaddstream = () => {
-                            gotRemoteStream(event, userId);
+                        this.connections[userId].onaddstream = () => { 
+                            //const remoteStream = new MediaStream;
+                            this.emit('remoteStream', {stream: mediaStream, id:userId});
                             
                         };
                         
                         //Adding the new video.
-                        connections[userId].addStream(localStream);
+                        this.connections[userId].addStream(this.localStream);
                         
                     }
 
@@ -162,18 +101,18 @@
                 //With more then one, it runs and we send offers to connect
                 if (room.count >= 2) {
                     console.log(room.count + ' Guys in the room');
-                    connections[joinedUserId].createOffer()
+                    this.connections[joinedUserId].createOffer()
                     .then((description) => {
-                        connections[joinedUserId].setLocalDescription(description)
+                        this.connections[joinedUserId].setLocalDescription(description)
                         .then(() => {
-                            console.log(socket.id, ' Send offer to ', joinedUserId);
-                            socket.emit('signaling', {
+                            console.log(this.socket.id, ' Send offer to ', joinedUserId);
+                            this.socket.emit('signaling', {
                                 toId: joinedUserId,
-                                description: connections[joinedUserId].localDescription,
+                                description: this.connections[joinedUserId].localDescription,
                                 type: 'sdp'
                             });
                         })
-                        .catch(handleError);
+                        .catch(e => console.log('Error: ',e));
                     });
                 }
                 
@@ -182,19 +121,49 @@
 
             
             //Remove the video from the guy that is going out.
-            socket.on('user-left', (userId) => {
-                let video = document.querySelector('[data-socket="'+ userId +'"]');
-                video.parentNode.removeChild(video);
+            this.socket.on('user-left', (userId) => {
+                this.emit('user-left', userId);
             });
 
             
             //Maneger of the signaling messages
-            socket.on('signaling', (data) => {
+            this.socket.on('signaling', (data) => {
+                const fromId = data.fromId;
                 switch (data.type) {
-                    case 'candidate':
-                    gotMessageFromSignalingAndItIsCandidate(socket, data);
-                    case 'sdp': //Session Description Protocol
-                    gotMessageFromSignalingAndItIsSdp(socket, data);
+
+
+                case 'candidate':
+                //Works with the candidate part:
+                if (fromId !== this.localUserId) {
+                    console.log(this.socket.id, ' Receive Candidate from ', fromId);
+                    if (data.candidate) {
+                        this.gotIceCandidate(fromId, data.candidate);
+                    }
+                };
+
+
+                case 'sdp': //Session Description Protocol
+                //Works with the offers and answers:
+                if (fromId !== this.localUserId && data.description) {
+                    console.log(this.socket.id, ' Receive sdp from ', fromId);
+                    this.connections[fromId].setRemoteDescription(new RTCSessionDescription(data.description))
+                    .then(() => {
+                        if (data.description.type === 'offer') {
+                            this.connections[fromId].createAnswer()
+                            .then((description) => {
+                                this.connections[fromId].setLocalDescription(description).then(() => {
+                                    console.log(this.socket.id, ' Send answer to ', fromId);
+                                    this.socket.emit('signaling', {
+                                        type: 'sdp',
+                                        toId: fromId,
+                                        description: this.connections[fromId].localDescription
+                                    });
+                                });
+                            }).catch(e => console.log('Error: ',e));
+                        }
+                    }).catch(e => console.log('Error: ',e));
+                    
+                    }
                 }
             });
         });
@@ -202,5 +171,19 @@
 
 
 
-// Starting the code: -----------------------------------------------------------------------
-    startLocalStream();
+    // Starting the client: 
+
+    //Function to start every thing:
+    startLocalStream() {
+        navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true
+        })
+        .then(mediaStream =>{
+            this.localStream = mediaStream;
+            this.emit('localStream', mediaStream);
+            this.connectSocketToSignaling(mediaStream);
+            console.log("Pegando userMedia com constraints:", { video: true,audio: true});
+        }).catch(e => console.log('Error: ',e));
+    }
+} 
